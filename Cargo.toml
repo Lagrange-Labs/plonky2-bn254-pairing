@@ -21,11 +21,11 @@ hex = "0.4.3"
 bitvec = "1"
 rayon = "1.7.0"
 plonky2 = "0.2.2"
-plonky2-bn254 = { git = "https://github.com/Lagrange-Labs/plonky2-bn254", branch = "lsc-plonky2-patch" }
-plonky2_ecdsa = { git = "https://github.com/Lagrange-Labs/plonky2-ecdsa", branch = "fix/include-modulus-as-overflow" }
-starky = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "starky-bn254-update" }
-starky-bn254 = { git = "http://github.com/Lagrange-Labs/starky-bn254", branch = "update-plonky2" }
+plonky2-bn254 = { git = "https://github.com/Lagrange-Labs/plonky2-bn254" }
+plonky2_ecdsa = { git = "https://github.com/Lagrange-Labs/plonky2-ecdsa" }
+starky = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "upstream" }
+starky-bn254 = { git = "http://github.com/Lagrange-Labs/starky-bn254" }
 
 [patch.crates-io]
-plonky2 = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "starky-bn254-update" }
-plonky2_field = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "starky-bn254-update" }
+plonky2 = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "upstream" }
+plonky2_field = { git = "https://github.com/Lagrange-Labs/plonky2", branch = "upstream" }
