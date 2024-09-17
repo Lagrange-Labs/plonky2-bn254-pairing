@@ -41,7 +41,8 @@ where
 mod test {
     use std::time::Instant;
 
-    use ark_bn254::{G1Affine, G2Affine};
+    use ark_bn254::{Bn254, G1Affine, G2Affine};
+    use ark_ec::{pairing::Pairing, AffineRepr};
     use ark_std::UniformRand;
     use plonky2::{
         field::goldilocks_field::GoldilocksField,
@@ -53,7 +54,11 @@ mod test {
     };
     use plonky2_bn254::curves::{g1curve_target::G1Target, g2curve_target::G2Target};
 
-    use crate::pairing::{pairing, pairing_circuit};
+    use crate::{
+        final_exp_native::final_exp_native,
+        miller_loop_native::miller_loop_native,
+        pairing::{pairing, pairing_circuit},
+    };
 
     #[test]
     fn test_pairing_circuit() {
@@ -78,5 +83,36 @@ mod test {
         output_t.set_witness(&mut pw, &output);
         let _proof = data.prove(pw).unwrap();
         println!("proving time: {:?}", now.elapsed());
+    }
+
+    #[test]
+    fn test_pairing_with_arkworks() {
+        let rng = &mut rand::thread_rng();
+        let p = G1Affine::rand(rng);
+        let q = G2Affine::rand(rng);
+        let output = pairing(p, q);
+        let exp_output = Bn254::pairing(p, q);
+        assert_eq!(output, exp_output.0);
+    }
+
+    // #[test]
+    // fn test_miller_loop_with_arkworks() {
+    //     let rng = &mut rand::thread_rng();
+    //     let p = G1Affine::rand(rng);
+    //     let q = G2Affine::rand(rng);
+    //     let output = miller_loop_native(&q, &p);
+    //     let exp_output = Bn254::miller_loop(p, q);
+    //     assert_eq!(output, exp_output.0.into());
+    // }
+
+    #[test]
+    fn test_final_exp_with_arkworks() {
+        let rng = &mut rand::thread_rng();
+        let p = G1Affine::rand(rng);
+        let q = G2Affine::rand(rng);
+        let rand_fq12 = Bn254::miller_loop(p, q);
+        let output = final_exp_native(rand_fq12.0.into());
+        let exp_output = Bn254::final_exponentiation(rand_fq12);
+        assert_eq!(output, exp_output.unwrap().0.into());
     }
 }

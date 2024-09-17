@@ -8,6 +8,7 @@ use itertools::Itertools;
 use num_bigint::BigUint;
 use num_traits::One;
 
+use plonky2::field::ops::Square;
 use plonky2_bn254::fields::native::MyFq12;
 
 use crate::miller_loop_native::conjugate_fp2;
@@ -127,6 +128,7 @@ pub fn get_naf(mut exp: Vec<u64>) -> Vec<i8> {
     naf
 }
 
+#[cfg(all(feature = "halo2_compatible"))]
 fn hard_part_BN_native(m: MyFq12) -> MyFq12 {
     let mp = frobenius_map_native(m, 1);
     let mp2 = frobenius_map_native(m, 2);
@@ -168,6 +170,30 @@ fn hard_part_BN_native(m: MyFq12) -> MyFq12 {
     T0
 }
 
+#[cfg(all(feature = "arkworks_compatible", not(feature = "halo2_compatible")))]
+fn hard_part_BN_native(m: MyFq12) -> MyFq12 {
+    let y0 = exp_by_neg_x(m);
+    let y1 = y0.square();
+    let y2 = y1.square();
+    let mut y3 = y2 * y1;
+    let y4 = exp_by_neg_x(y3);
+    let y5 = y4.square();
+    y3 = conjugate_fp12(y3);
+    let y6 = conjugate_fp12(exp_by_neg_x(y5));
+    let y7 = y6 * y4;
+    let mut y8 = y7 * y3;
+    let y9 = y8 * y1;
+    let y10 = y8 * y4;
+    let y11 = y10 * m;
+    let y12 = frobenius_map_native(y9, 1);
+    let y13 = y12 * y11;
+    let y8 = frobenius_map_native(y8, 2);
+    let y14 = y8 * y13;
+    let m = conjugate_fp12(m);
+    let y15 = frobenius_map_native(m * y9, 3);
+    y15 * y14
+}
+
 fn conjugate_fp12(a: MyFq12) -> MyFq12 {
     let coeffs: Vec<Fq> = a
         .coeffs
@@ -178,6 +204,11 @@ fn conjugate_fp12(a: MyFq12) -> MyFq12 {
     MyFq12 {
         coeffs: coeffs.try_into().unwrap(),
     }
+}
+
+#[cfg(all(feature = "arkworks_compatible", not(feature = "halo2_compatible")))]
+fn exp_by_neg_x(a: MyFq12) -> MyFq12 {
+    conjugate_fp12(pow_native(a, vec![BN_X]))
 }
 
 pub fn frob_coeffs(index: usize) -> Fq2 {
