@@ -13,15 +13,8 @@ use plonky2::{
 };
 
 use plonky2_bn254::fields::{fq12_target::Fq12Target, fq2_target::Fq2Target};
-use starky_bn254::fields::fq12_u64::{
-    circuit::{fq12_exp_u64_circuit, Fq12ExpU64InputTarget},
-    exp_u64::{num_columns, num_public_inputs},
-};
 
 use crate::final_exp_native::{frob_coeffs, BN_X};
-
-/// `fq12_exp_u64_circuit` generic parameter
-const FQ12_EXP_U64_NUM_IO: usize = 4;
 
 fn frobenius_map<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
@@ -78,13 +71,9 @@ fn hard_part_BN<
 ) -> Fq12Target<F, D>
 where
     <C as GenericConfig<D>>::Hasher: AlgebraicHasher<F>,
-    [(); num_columns(FQ12_EXP_U64_NUM_IO)]:,
-    [(); num_public_inputs(FQ12_EXP_U64_NUM_IO)]:,
 {
     let offset = Fq12Target::constant(builder, Fq12::one());
     let exp_val = builder.constant(F::from_canonical_u64(BN_X));
-    let mut exp_inputs = vec![];
-    let mut exp_outputs = vec![];
 
     let mp = frobenius_map(builder, m, 1);
     let mp2 = frobenius_map(builder, m, 2);
@@ -92,44 +81,24 @@ where
 
     let mp2_mp3 = mp2.mul(builder, &mp3);
     let y0 = mp.mul(builder, &mp2_mp3);
-    let y1 = m.confugate(builder);
+    let y0: Fq12Target<F, D> = mp.mul(builder, &mp2_mp3);
+    let y1 = m.conjugate(builder);
 
-    // let mx = pow(builder, m, BN_X);
-    let mx = Fq12Target::empty(builder);
-    exp_inputs.push(Fq12ExpU64InputTarget {
-        x: m.clone(),
-        offset: offset.clone(),
-        exp_val,
-    });
-    exp_outputs.push(mx.clone());
+    let mx = m.pow(builder, &offset, exp_val);
 
     let mxp = frobenius_map(builder, &mx, 1);
-    // let mx2 = pow(builder, &mx, BN_X);
-    let mx2 = Fq12Target::empty(builder);
-    exp_inputs.push(Fq12ExpU64InputTarget {
-        x: mx.clone(),
-        offset: offset.clone(),
-        exp_val,
-    });
-    exp_outputs.push(mx2.clone());
+    let mx2 = mx.pow(builder, &offset, exp_val);
     let mx2p = frobenius_map(builder, &mx2, 1);
     let y2 = frobenius_map(builder, &mx2, 2);
-    let y5 = mx2.confugate(builder);
-    // let mx3 = pow(builder, &mx2, BN_X);
-    let mx3 = Fq12Target::empty(builder);
-    exp_inputs.push(Fq12ExpU64InputTarget {
-        x: mx2.clone(),
-        offset,
-        exp_val,
-    });
-    exp_outputs.push(mx3.clone());
+    let y5 = mx2.conjugate(builder);
+    let mx3 = mx2.pow(builder, &offset, exp_val);
     let mx3p = frobenius_map(builder, &mx3, 1);
 
-    let y3 = mxp.confugate(builder);
+    let y3 = mxp.conjugate(builder);
     let mx_mx2p = mx.mul(builder, &mx2p);
-    let y4 = mx_mx2p.confugate(builder);
+    let y4 = mx_mx2p.conjugate(builder);
     let mx3_mx3p = mx3.mul(builder, &mx3p);
-    let y6 = mx3_mx3p.confugate(builder);
+    let y6 = mx3_mx3p.conjugate(builder);
 
     let mut T0 = y6.mul(builder, &y6);
     T0 = T0.mul(builder, &y4);
@@ -146,17 +115,6 @@ where
     T0 = T0.mul(builder, &T0);
     T0 = T0.mul(builder, &T1);
 
-    assert!(exp_inputs.len() <= FQ12_EXP_U64_NUM_IO);
-    // TODO: fix build with `fq12_exp_u64_circuit::<... , FQ12_EXP_U64_NUM_IO>`.
-    assert_eq!(FQ12_EXP_U64_NUM_IO, 4);
-    let exp_outputs2 = fq12_exp_u64_circuit::<F, C, D, 4>(builder, &exp_inputs);
-    exp_outputs
-        .iter()
-        .zip(exp_outputs2.iter())
-        .for_each(|(a, b)| {
-            Fq12Target::connect(builder, a, b);
-        });
-
     T0
 }
 
@@ -164,7 +122,7 @@ fn easy_part<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     a: &Fq12Target<F, D>,
 ) -> Fq12Target<F, D> {
-    let f1 = a.confugate(builder);
+    let f1 = a.conjugate(builder);
     let f2 = f1.div(builder, &a);
     let f3 = frobenius_map(builder, &f2, 2);
     let f = f3.mul(builder, &f2);

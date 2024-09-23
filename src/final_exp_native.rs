@@ -221,10 +221,9 @@ mod tests {
     use ark_ff::Field;
     use ark_std::UniformRand;
     use num_bigint::BigUint;
-    use starky_bn254::utils::utils::biguint_to_bits;
 
     use crate::miller_loop_native::{miller_loop_native, multi_miller_loop_native};
-    use plonky2_bn254::fields::debug_tools::print_ark_fq;
+    use plonky2_bn254::{fields::debug_tools::print_ark_fq, utils::biguint_to_bits};
 
     use super::{final_exp_native, pow_native, BN_X};
 
