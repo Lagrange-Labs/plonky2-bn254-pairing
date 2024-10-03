@@ -21,7 +21,7 @@ hex = "0.4.3"
 bitvec = "1"
 rayon = "1.7.0"
 plonky2 = "0.2.2"
-plonky2-bn254 = { git = "https://github.com/Lagrange-Labs/plonky2-bn254", branch = "feat/add-fq12-exp" }
+plonky2-bn254 = { git = "https://github.com/Lagrange-Labs/plonky2-bn254" }
 plonky2_ecdsa = { git = "https://github.com/Lagrange-Labs/plonky2-ecdsa" }
 
 [patch.crates-io]
