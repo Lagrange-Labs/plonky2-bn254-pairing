@@ -8,6 +8,7 @@ use num_bigint::BigUint;
 use plonky2::iop::generator::{GeneratedValues, SimpleGenerator};
 use plonky2::iop::target::Target;
 use plonky2::iop::witness::PartitionWitness;
+use plonky2::util::serialization::{Read, Write};
 use plonky2::{
     field::extension::Extendable, hash::hash_types::RichField,
     plonk::circuit_builder::CircuitBuilder,
@@ -61,7 +62,7 @@ fn sparse_line_function_equal<F: RichField + Extendable<D>, const D: usize>(
 }
 
 #[derive(Debug)]
-struct SparseFp12MulGenerator<F: RichField + Extendable<D>, const D: usize> {
+pub struct SparseFp12MulGenerator<F: RichField + Extendable<D>, const D: usize> {
     a: Fq12Target<F, D>,
     b: Vec<Fq2Target<F, D>>,
     sparse_map: Vec<bool>,
@@ -186,20 +187,47 @@ impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D>
 
     fn serialize(
         &self,
-        _dst: &mut Vec<u8>,
-        _common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
+        dst: &mut Vec<u8>,
+        common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
     ) -> plonky2::util::serialization::IoResult<()> {
-        unimplemented!()
+        self.a.serialize(dst, common_data)?;
+        self.mul.serialize(dst, common_data)?;
+        dst.write_usize(self.b.len())?;
+        for fq2 in &self.b {
+            fq2.serialize(dst, common_data)?;
+        }
+        dst.write_usize(self.sparse_map.len())?;
+        for flag in &self.sparse_map {
+            dst.write_bool(*flag)?;
+        }
+
+        Ok(())
     }
 
     fn deserialize(
-        _src: &mut plonky2::util::serialization::Buffer,
-        _common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
+        src: &mut plonky2::util::serialization::Buffer,
+        common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
     ) -> plonky2::util::serialization::IoResult<Self>
     where
         Self: Sized,
     {
-        unimplemented!()
+        let a = Fq12Target::deserialize(src, common_data)?;
+        let mul = Fq12Target::deserialize(src, common_data)?;
+        let b_len = src.read_usize()?;
+        let b = (0..b_len)
+            .map(|_| Fq2Target::deserialize(src, common_data))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sparse_map_len = src.read_usize()?;
+        let sparse_map = (0..sparse_map_len)
+            .map(|_| src.read_bool())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            a,
+            b,
+            mul,
+            sparse_map,
+        })
     }
 }
 
