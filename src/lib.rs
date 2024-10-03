@@ -1,3 +1,5 @@
+#![feature(generic_const_exprs)]
+
 pub mod final_exp_native;
 pub mod final_exp_target;
 pub mod miller_loop_native;

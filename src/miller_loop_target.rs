@@ -3,14 +3,21 @@ use crate::miller_loop_native::SIX_U_PLUS_2_NAF;
 use ark_bn254::{Fq, Fq2};
 use ark_ff::Field;
 use ark_std::One;
+use itertools::Itertools;
 use num_bigint::BigUint;
+use plonky2::iop::generator::{GeneratedValues, SimpleGenerator};
+use plonky2::iop::target::Target;
+use plonky2::iop::witness::PartitionWitness;
+use plonky2::util::serialization::{Read, Write};
 use plonky2::{
     field::extension::Extendable, hash::hash_types::RichField,
     plonk::circuit_builder::CircuitBuilder,
 };
 use plonky2_bn254::curves::{g1curve_target::G1Target, g2curve_target::G2Target};
 use plonky2_bn254::fields::fq12_target::Fq12Target;
+use plonky2_bn254::fields::native::{from_biguint_to_fq, MyFq12};
 use plonky2_bn254::fields::{fq2_target::Fq2Target, fq_target::FqTarget};
+use plonky2_ecdsa::gadgets::biguint::{GeneratedValuesBigUint, WitnessBigUint};
 
 const XI_0: usize = 9;
 
@@ -54,59 +61,201 @@ fn sparse_line_function_equal<F: RichField + Extendable<D>, const D: usize>(
     vec![Some(out0), None, None, Some(out3), Some(out4), None]
 }
 
+#[derive(Debug, Default)]
+pub struct SparseFp12MulGenerator<F: RichField + Extendable<D>, const D: usize> {
+    a: Fq12Target<F, D>,
+    b: Vec<Fq2Target<F, D>>,
+    sparse_map: Vec<bool>,
+    mul: Fq12Target<F, D>,
+}
+
+impl<F: RichField + Extendable<D>, const D: usize> SimpleGenerator<F, D>
+    for SparseFp12MulGenerator<F, D>
+{
+    fn id(&self) -> String {
+        "SparseFp12MulGenerator".to_string()
+    }
+
+    fn dependencies(&self) -> Vec<Target> {
+        let mut deps = self
+            .a
+            .coeffs
+            .iter()
+            .flat_map(|coeff| coeff.target.value.limbs.iter().map(|&l| l.0))
+            .collect_vec();
+
+        for fq2_target in &self.b {
+            deps.extend(
+                fq2_target
+                    .coeffs
+                    .iter()
+                    .flat_map(|coeff| coeff.target.value.limbs.iter().map(|&l| l.0)),
+            );
+        }
+
+        deps
+    }
+
+    fn run_once(&self, witness: &PartitionWitness<F>, out_buffer: &mut GeneratedValues<F>) {
+        let mut a_fp2_coeffs = Vec::with_capacity(6);
+        for i in 0..6 {
+            let c0 = from_biguint_to_fq(
+                witness.get_biguint_target(self.a.coeffs[i].target.value.clone()),
+            );
+            let c1 = from_biguint_to_fq(
+                witness.get_biguint_target(self.a.coeffs[i + 6].target.value.clone()),
+            );
+            a_fp2_coeffs.push(Fq2::new(c0, c1));
+        }
+
+        let mut b_val = Vec::with_capacity(self.b.len());
+        for b_target in self.b.iter() {
+            let c0 = from_biguint_to_fq(
+                witness.get_biguint_target(b_target.coeffs[0].target.value.clone()),
+            );
+            let c1 = from_biguint_to_fq(
+                witness.get_biguint_target(b_target.coeffs[1].target.value.clone()),
+            );
+            b_val.push(Fq2 { c0, c1 });
+        }
+
+        let mut prod_2d: Vec<Option<Fq2>> = vec![None; 11];
+        for i in 0..6 {
+            let mut idx = 0;
+            for j in 0..6 {
+                let mut cur_b: Option<Fq2> = None;
+                if self.sparse_map[j] {
+                    cur_b = Some(b_val[idx]);
+                    idx += 1;
+                } else {
+                    cur_b = None;
+                }
+                prod_2d[i + j] = match (prod_2d[i + j].clone(), &a_fp2_coeffs[i], cur_b.as_ref()) {
+                    (a, _, None) => a,
+                    (None, a, Some(b)) => {
+                        let ab = a * b;
+                        Some(ab)
+                    }
+                    (Some(a), b, Some(c)) => {
+                        let bc = b * c;
+                        let out = a + bc;
+                        Some(out)
+                    }
+                }
+            }
+        }
+
+        let mut out_fp2 = Vec::with_capacity(6);
+        for i in 0..6 {
+            let prod = if i != 5 {
+                let eval_w6 = prod_2d[i + 6]
+                    .as_ref()
+                    .map(|a| a * Fq2::new(Fq::from(9), Fq::ONE));
+                match (prod_2d[i].as_ref(), eval_w6) {
+                    (None, b) => b.unwrap(),
+                    (Some(a), None) => a.clone(),
+                    (Some(a), Some(b)) => a + b,
+                }
+            } else {
+                prod_2d[i].clone().unwrap()
+            };
+            out_fp2.push(prod);
+        }
+
+        let mut out_coeffs = Vec::with_capacity(12);
+        for fp2_coeff in &out_fp2 {
+            out_coeffs.push(fp2_coeff.c0.into());
+        }
+        for fp2_coeff in &out_fp2 {
+            out_coeffs.push(fp2_coeff.c1.into());
+        }
+
+        let out = MyFq12 {
+            coeffs: out_coeffs.try_into().unwrap(),
+        };
+        let out_biguint: Vec<BigUint> = out
+            .coeffs
+            .iter()
+            .cloned()
+            .map(|coeff| coeff.into())
+            .collect_vec();
+
+        for i in 0..12 {
+            out_buffer.set_biguint_target(&self.mul.coeffs[i].target.value, &out_biguint[i]);
+        }
+    }
+
+    fn serialize(
+        &self,
+        dst: &mut Vec<u8>,
+        common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
+    ) -> plonky2::util::serialization::IoResult<()> {
+        self.a.serialize(dst, common_data)?;
+        self.mul.serialize(dst, common_data)?;
+        dst.write_usize(self.b.len())?;
+        for fq2 in &self.b {
+            fq2.serialize(dst, common_data)?;
+        }
+        dst.write_usize(self.sparse_map.len())?;
+        for flag in &self.sparse_map {
+            dst.write_bool(*flag)?;
+        }
+
+        Ok(())
+    }
+
+    fn deserialize(
+        src: &mut plonky2::util::serialization::Buffer,
+        common_data: &plonky2::plonk::circuit_data::CommonCircuitData<F, D>,
+    ) -> plonky2::util::serialization::IoResult<Self>
+    where
+        Self: Sized,
+    {
+        let a = Fq12Target::deserialize(src, common_data)?;
+        let mul = Fq12Target::deserialize(src, common_data)?;
+        let b_len = src.read_usize()?;
+        let b = (0..b_len)
+            .map(|_| Fq2Target::deserialize(src, common_data))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sparse_map_len = src.read_usize()?;
+        let sparse_map = (0..sparse_map_len)
+            .map(|_| src.read_bool())
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
+            a,
+            b,
+            mul,
+            sparse_map,
+        })
+    }
+}
+
 fn sparse_fp12_multiply<F: RichField + Extendable<D>, const D: usize>(
     builder: &mut CircuitBuilder<F, D>,
     a: &Fq12Target<F, D>,
     b: Vec<Option<Fq2Target<F, D>>>,
 ) -> Fq12Target<F, D> {
-    let mut a_fp2_coeffs = Vec::with_capacity(6);
-    for i in 0..6 {
-        a_fp2_coeffs.push(Fq2Target {
-            coeffs: [a.coeffs[i].clone(), a.coeffs[i + 6].clone()],
-        });
-    }
-    let mut prod_2d: Vec<Option<Fq2Target<F, D>>> = vec![None; 11];
-    for i in 0..6 {
-        for j in 0..6 {
-            prod_2d[i + j] = match (prod_2d[i + j].clone(), &a_fp2_coeffs[i], b[j].as_ref()) {
-                (a, _, None) => a,
-                (None, a, Some(b)) => {
-                    let ab = a.mul(builder, b);
-                    Some(ab)
-                }
-                (Some(a), b, Some(c)) => {
-                    let bc = b.mul(builder, c);
-                    let out = a.add(builder, &bc);
-                    Some(out)
-                }
-            };
+    let mul = Fq12Target::empty(builder);
+
+    let mut sparse_map = Vec::with_capacity(b.len());
+    let mut b_targets = Vec::new();
+    for maybe_fq2_target in b {
+        if let Some(fq2_target) = maybe_fq2_target {
+            sparse_map.push(true);
+            b_targets.push(fq2_target);
+        } else {
+            sparse_map.push(false);
         }
     }
-    let mut out_fp2 = Vec::with_capacity(6);
-    for i in 0..6 {
-        let prod = if i != 5 {
-            let eval_w6 = prod_2d[i + 6].as_ref().map(|a| a.mul_w6::<XI_0>(builder));
-            match (prod_2d[i].as_ref(), eval_w6) {
-                (None, b) => b.unwrap(), // Our current use cases of 235 and 034 sparse multiplication always result in non-None value
-                (Some(a), None) => a.clone(),
-                (Some(a), Some(b)) => a.add(builder, &b),
-            }
-        } else {
-            prod_2d[i].clone().unwrap()
-        };
-        out_fp2.push(prod);
-    }
-    let mut out_coeffs = Vec::with_capacity(12);
-    for fp2_coeff in &out_fp2 {
-        out_coeffs.push(fp2_coeff.coeffs[0].clone());
-    }
-    for fp2_coeff in &out_fp2 {
-        out_coeffs.push(fp2_coeff.coeffs[1].clone());
-    }
+    builder.add_simple_generator(SparseFp12MulGenerator::<F, D> {
+        a: a.clone(),
+        b: b_targets,
+        sparse_map,
+        mul: mul.clone(),
+    });
 
-    Fq12Target {
-        coeffs: out_coeffs.try_into().unwrap(),
-    }
+    mul
 }
 
 fn fp12_multiply_with_line_unequal<F: RichField + Extendable<D>, const D: usize>(
@@ -353,6 +502,8 @@ pub fn multi_miller_loop_circuit<F: RichField + Extendable<D>, const D: usize>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use ark_bn254::{G1Affine, G2Affine};
     use ark_std::UniformRand;
     use plonky2::{
@@ -399,7 +550,9 @@ mod tests {
         let pw = PartialWitness::<F>::new();
         let data = builder.build::<C>();
         dbg!(data.common.degree_bits());
+        let now = Instant::now();
         let _proof = data.prove(pw);
+        println!("proving time: {:?}", now.elapsed());
     }
 
     #[test]
