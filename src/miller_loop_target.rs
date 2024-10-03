@@ -61,7 +61,7 @@ fn sparse_line_function_equal<F: RichField + Extendable<D>, const D: usize>(
     vec![Some(out0), None, None, Some(out3), Some(out4), None]
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SparseFp12MulGenerator<F: RichField + Extendable<D>, const D: usize> {
     a: Fq12Target<F, D>,
     b: Vec<Fq2Target<F, D>>,
